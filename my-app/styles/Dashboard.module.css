@@ -21,10 +21,15 @@
   width: 100%;
   padding: 16px 25px;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
-  gap: 170px;
   position: relative;
+}
+
+.leftStack {
+  display: flex;
+  align-items: center;
+  gap: 32px;
 }
 
 .logoContainer {
@@ -32,10 +37,6 @@
   align-items: center;
   justify-content: flex-start;
   min-width: 48px;
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
 }
 
 .logo {
@@ -124,6 +125,7 @@
 
   background: linear-gradient(90deg, #bf5af2, #ff7ae5);
   -webkit-background-clip: text;
+  background-clip: text;
   color: transparent;
 }
 
@@ -170,12 +172,14 @@
     #ffcc57
   );
   -webkit-background-clip: text;
+  background-clip: text;
   color: transparent;
 }
 
 .userName {
   background: linear-gradient(90deg, #ff5f6d, #ffc371);
   -webkit-background-clip: text;
+  background-clip: text;
   color: transparent;
 }
 
