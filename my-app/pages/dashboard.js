@@ -4,11 +4,54 @@ import Navigation from "@/components/Navigation";
 
 export default function Dashboard() {
   const [greeting, setGreeting] = useState("");
-  const [messages, setMessages] = useState([
-    { sender: "ai", text: "Hey little hardworking fellow! How did your day go? I am so excited to hear!!" },
-  ]);
+  const [threads, setThreads] = useState([]);
+  const [activeThreadId, setActiveThreadId] = useState(null);
   const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
   const bottomRef = useRef(null);
+  const isInitialLoad = useRef(true);
+
+  const CHAT_API_URL =
+    process.env.NEXT_PUBLIC_CHAT_API_URL || "http://localhost:8000/chat";
+
+  const INITIAL_AI_MESSAGE = {
+    sender: "ai",
+    text: "Hey little hardworking fellow! How did your day go? I am so excited to hear!!",
+  };
+
+  const createThread = () => ({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    messages: [INITIAL_AI_MESSAGE],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  const activeThread = threads.find((thread) => thread.id === activeThreadId) || threads[0];
+  const messages = activeThread?.messages || [];
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("gossip_threads");
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      setThreads(parsed);
+      setActiveThreadId(parsed[0]?.id || null);
+    } else {
+      const starter = createThread();
+      setThreads([starter]);
+      setActiveThreadId(starter.id);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      return;
+    }
+    window.localStorage.setItem("gossip_threads", JSON.stringify(threads));
+  }, [threads]);
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -21,17 +64,78 @@ export default function Dashboard() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const sendMessage = () => {
-    if (!input.trim()) return;
-    setMessages((prev) => [...prev, { sender: "user", text: input }]);
-    setInput("");
+  const toHistory = (msgs) =>
+    msgs.map((msg) => ({
+      role: msg.sender === "ai" ? "assistant" : "user",
+      content: msg.text,
+    }));
 
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { sender: "ai", text: "Got it! Want to dive deeper? 😊" },
-      ]);
-    }, 500);
+  const updateThreadMessages = (threadId, transform) => {
+    setThreads((prev) =>
+      prev.map((thread) =>
+        thread.id === threadId
+          ? {
+              ...thread,
+              messages: transform(thread.messages),
+              updatedAt: Date.now(),
+            }
+          : thread
+      )
+    );
+  };
+
+  const summarizeThread = (thread) => {
+    const source =
+      [...thread.messages]
+        .reverse()
+        .find((msg) => msg.sender === "user")?.text || thread.messages[0]?.text || "New chat";
+    return source.split(/\s+/).slice(0, 4).join(" ");
+  };
+
+  const startNewChat = () => {
+    const newThread = createThread();
+    setThreads((prev) => [newThread, ...prev]);
+    setActiveThreadId(newThread.id);
+    setInput("");
+    setError(null);
+  };
+
+  const switchThread = (threadId) => {
+    setActiveThreadId(threadId);
+    setInput("");
+    setError(null);
+  };
+
+  const sendMessage = async () => {
+    if (!activeThread || !input.trim() || isLoading) return;
+
+    const userText = input.trim();
+    updateThreadMessages(activeThread.id, (msgs) => [...msgs, { sender: "user", text: userText }]);
+    setInput("");
+    setError(null);
+    setIsLoading(true);
+
+    try {
+      const response = await fetch(CHAT_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: userText,
+          history: toHistory(messages),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to reach gossip.ai");
+      }
+
+      const data = await response.json();
+      updateThreadMessages(activeThread.id, (msgs) => [...msgs, { sender: "ai", text: data.reply }]);
+    } catch (err) {
+      setError(err.message || "Something went wrong");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -41,13 +145,36 @@ export default function Dashboard() {
       <div className={styles.layout}>
         {/* SIDEBAR */}
         <aside className={styles.sidebar}>
-          <h2 className={styles.sidebarTitle}>Recent Gossips</h2>
+          <div className={styles.sidebarHeader}>
+            <h2 className={styles.sidebarTitle}>Chats</h2>
+            <button className={styles.newChatBtn} onClick={startNewChat}>
+              + New Chat
+            </button>
+          </div>
 
           <div className={styles.storyList}>
-            <div className={styles.story}> Nailed my presentation today!</div>
-            <div className={styles.story}> Tough call with client…</div>
-            <div className={styles.story}> Manager appreciated my work!</div>
-            <div className={styles.emptyStory}>Your next update goes here…</div>
+            {threads.length === 0 && (
+              <div className={styles.emptyStory}>No chats yet. Start one!</div>
+            )}
+            {threads.map((thread) => (
+              <button
+                key={thread.id}
+                className={
+                  thread.id === activeThread?.id
+                    ? `${styles.story} ${styles.activeStory}`
+                    : styles.story
+                }
+                onClick={() => switchThread(thread.id)}
+              >
+                <div className={styles.storySummary}>{summarizeThread(thread)}</div>
+                <div className={styles.storyMeta}>
+                  {new Date(thread.updatedAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </div>
+              </button>
+            ))}
           </div>
         </aside>
 
@@ -76,6 +203,12 @@ export default function Dashboard() {
               </div>
             ))}
 
+            {error && (
+              <div className={styles.aiBubble}>
+                {error} — please try again in a bit.
+              </div>
+            )}
+
             <div ref={bottomRef} />
           </div>
 
@@ -86,9 +219,10 @@ export default function Dashboard() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendMessage()}
               className={styles.input}
+              disabled={isLoading}
             />
-            <button onClick={sendMessage} className={styles.send}>
-              ➤
+            <button onClick={sendMessage} className={styles.send} disabled={isLoading}>
+              {isLoading ? "…" : "➤"}
             </button>
           </div>
         </main>
