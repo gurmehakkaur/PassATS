@@ -8,6 +8,8 @@
   backdrop-filter: blur(10px);
   z-index: 100;
   transition: all 0.3s ease;
+  width: 100vw;
+  min-width: 100vw;
 }
 
 .navbar.scrolled {
@@ -16,28 +18,45 @@
 }
 
 .navContent {
-  max-width: 1200px;
-  margin: 0 auto;
+  width: 100%;
   padding: 16px 25px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 170px; /* space between logo and links */
+  gap: 170px;
+  position: relative;
+}
+
+.logoContainer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 48px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
 }
 
 .logo {
   display: flex;
   align-items: center;
-  gap: 8px;
   text-decoration: none;
-  font-weight: 700;
-  font-size: 20px;
-  color: #facc15;
   transition: 0.3s;
 }
 
-.logo:hover {
-  opacity: 0.8;
+.logoImg {
+  height: 40px;
+  width: auto;
+  display: block;
+  margin-left: 0;
+}
+
+.logoText {
+  color: #fff;
+  font-weight: 700;
+  font-size: 20px;
+  margin-left: 10px;
 }
 
 .navLinks {
