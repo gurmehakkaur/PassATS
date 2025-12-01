@@ -1,25 +1,46 @@
-# GossipAI - Your Personal AI Work Companion
+# GossipAI — Memory-Augmented Personal Work Companion
 
-<img width="1919" height="871" alt="image" src="https://github.com/user-attachments/assets/f1978502-b813-4f82-a0bc-383e0632e79d" />
+GossipAI is a lightweight, agent-style chat system I built to solve a real problem:
+AI chats don’t remember anything. Humans do. Careers depend on it.
 
-## The Problem
+During my co-op, I realized how much growth gets lost: achievements, lessons, decisions, mistakes, insights. Traditional LLM chats collapse under long histories. GossipAI fixes that with an actual memory architecture — fast, structured, and retrieval-ready.
 
-There's a well-documented phenomenon in career development: people forget what they've achieved. Not because the achievements weren't significant, but because we're human. We move from project to project, sprint to sprint, and the details fade. When it's time to write a resume, prepare for a performance review, or answer "tell me about a time when..." in an interview, we draw blanks.
+This is not a “chat app.”
+It’s a personal knowledge layer that grows with you.
+## Technical Architecture
 
-I experienced this firsthand during my co-op at RBC. I started documenting my daily work in ChatGPT - what I accomplished, mistakes I made, lessons learned, goals I was working toward. It became my external memory. Before heading into roundtables with senior leadership, I'd scroll through to remember key projects. When applying for full-time positions, that chat history became the foundation for my resume and interview prep.
+### Backend (FastAPI)
+The backend runs on FastAPI with full async support for handling concurrent requests efficiently. The architecture is deliberately modular to separate concerns:
 
-Then the chat got too long. It stopped loading. The context window filled up. I lost access to months of documented growth.
+**LLM Strategy:**
+- GPT-4o handles the main chat interface and semantic memory extraction where reasoning quality matters
+- GPT-4o-mini processes episodic memories and journal labels where speed and cost efficiency are priorities
+- This hybrid approach balances performance with budget
 
-That's when I realized the fundamental limitation: ChatGPT wasn't designed to be a long-term memory system. It's a conversational interface with a fixed context window. What I needed was something that could remember indefinitely, organize memories by topic, and retrieve relevant context on demand.
+**Vector Database:**
+Qdrant stores all memories with 1536-dimensional embeddings from OpenAI's text-embedding-3-small model. The choice of Qdrant over alternatives like Pinecone or Weaviate came down to:
+- Native support for payload filtering (crucial for journal label queries)
+- Excellent performance on cosine similarity search
+- Clean Python client with async support
+- Generous free tier for development
 
-I'd been learning RAG (Retrieval-Augmented Generation) techniques for three months. Vector databases, embedding models, semantic search, memory architectures. This project became the perfect opportunity to implement everything I'd learned while solving a real problem I was experiencing.
+**Memory Architecture:**
+The system maintains two separate Qdrant collections:
+- `episodic_memory` - Conversation summaries with journal labels, emotions, entities
+- `semantic_memory` - Extracted facts, traits, patterns, relationships
 
-## What It Does
+This separation allows different retrieval strategies. Episodic memories are queried by similarity and filtered by journal labels. Semantic memories are retrieved for context injection based on confidence scores.
 
-GossipAI is an intelligent chatbot built to be your supportive work friend. Unlike typical AI assistants that just answer questions, GossipAI actively listens, remembers your conversations, and builds a genuine understanding of who you are over time. It's designed to help you process work stress, track your goals, and manage your calendar through natural conversation.
+**Modular Backend Structure:**
+- `chat.py` - Main FastAPI app, endpoints, function calling logic
+- `episodic_memory.py` - Journal labeling, episodic memory creation, Qdrant storage
+- `semantic_memory.py` - Pattern extraction, semantic memory management
+- `memory_models.py` - Pydantic models ensuring type safety across the system
+- `calendar_mcp.py` - Google Calendar OAuth and API wrapper following MCP patterns
+- `memory_functions.py` - Compatibility layer re-exporting from specialized modules
 
-More importantly, it never forgets. Every conversation is processed into structured memories, organized by persistent topics, and made searchable. When you need to recall what you achieved three months ago, it's there. When you're preparing for an interview and need to remember that project where you learned a critical lesson, the system retrieves it instantly.
-
+### Frontend (Next.js + React)
+The frontend is built with Next.js and React, prioritizing clean UX and responsive design. Tailwind CSS handles styling with a custom color scheme that maintains consistency across pages.
 ## Core Features
 
 ### 1. Conversational AI Chat
@@ -100,60 +121,13 @@ The system integrates with Google Calendar using the Model Context Protocol. The
 - Parse flexible time formats (ISO timestamps or natural language)
 - Set event durations and descriptions
 
-The integration uses OAuth 2.0 for secure authentication. After the first-time browser-based login, a token is stored locally for seamless future access.
+The integration uses OAuth 2.0 for secure authentication. 
 
 ### 8. Vector Search
 All episodic and semantic memories are stored in Qdrant with embeddings generated by OpenAI's text-embedding-3-small model. This enables:
 - Semantic search across your conversation history
 - Retrieval of relevant memories for context injection
 - Similarity-based grouping of related conversations
-
-## What Makes This Different
-
-Most AI chatbots treat every conversation as isolated. They might have some basic context window, but they don't truly remember you. GossipAI takes a fundamentally different approach inspired by how human memory works.
-
-The episodic memory system doesn't just store what you said - it understands the narrative, emotion, and significance. The journal labeling ensures that when you talk about "networking with that director" three months from now, the system knows exactly what you're referring to and can pull up all related context.
-
-The semantic layer goes further by distilling patterns. If you mention work-life balance struggles across multiple conversations, it extracts that as a core value or concern. This gets injected into every future conversation, making the AI genuinely personalized rather than just contextually aware.
-
-The idle detection is subtle but crucial. Instead of processing every message individually, it waits for natural conversation breaks. This creates more coherent memory units and significantly reduces API costs. A 20-message back-and-forth becomes one well-structured episodic memory rather than 20 fragmented entries.
-
-The calendar integration with function calling means you can literally say "schedule a meeting with Sarah tomorrow at 2pm" and it happens. No switching apps, no manual entry. The AI parses your intent, extracts the details, and executes the action.
-
-## Technical Architecture
-
-### Backend (FastAPI)
-The backend runs on FastAPI with full async support for handling concurrent requests efficiently. The architecture is deliberately modular to separate concerns:
-
-**LLM Strategy:**
-- GPT-4o handles the main chat interface and semantic memory extraction where reasoning quality matters
-- GPT-4o-mini processes episodic memories and journal labels where speed and cost efficiency are priorities
-- This hybrid approach balances performance with budget
-
-**Vector Database:**
-Qdrant stores all memories with 1536-dimensional embeddings from OpenAI's text-embedding-3-small model. The choice of Qdrant over alternatives like Pinecone or Weaviate came down to:
-- Native support for payload filtering (crucial for journal label queries)
-- Excellent performance on cosine similarity search
-- Clean Python client with async support
-- Generous free tier for development
-
-**Memory Architecture:**
-The system maintains two separate Qdrant collections:
-- `episodic_memory` - Conversation summaries with journal labels, emotions, entities
-- `semantic_memory` - Extracted facts, traits, patterns, relationships
-
-This separation allows different retrieval strategies. Episodic memories are queried by similarity and filtered by journal labels. Semantic memories are retrieved for context injection based on confidence scores.
-
-**Modular Backend Structure:**
-- `chat.py` - Main FastAPI app, endpoints, function calling logic
-- `episodic_memory.py` - Journal labeling, episodic memory creation, Qdrant storage
-- `semantic_memory.py` - Pattern extraction, semantic memory management
-- `memory_models.py` - Pydantic models ensuring type safety across the system
-- `calendar_mcp.py` - Google Calendar OAuth and API wrapper following MCP patterns
-- `memory_functions.py` - Compatibility layer re-exporting from specialized modules
-
-### Frontend (Next.js + React)
-The frontend is built with Next.js and React, prioritizing clean UX and responsive design. Tailwind CSS handles styling with a custom color scheme that maintains consistency across pages.
 
 **Key Design Decisions:**
 - Server-side rendering disabled in favor of client-side for this use case (single-user, local deployment)
