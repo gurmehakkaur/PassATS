@@ -1,4 +1,3 @@
 server/.env
 server/token.pickle
-README.md
 server/credentials.json
