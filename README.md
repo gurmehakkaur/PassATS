@@ -29,6 +29,8 @@ After natural pauses (60s idle), the system summarizes the recent conversation i
 - importance  
 
 This becomes an episode — a single, meaningful journal entry.
+<img width="1919" height="1023" alt="image" src="https://github.com/user-attachments/assets/8e96d903-d76d-45c7-ad11-09f19df89c33" />
+
 
 ### 2. Smart Tagging & Consolidation
 
@@ -38,6 +40,8 @@ Before creating a new episode, the system checks existing journal topics:
 - If not, a new episode is created.
 
 This creates topic-centric journals where a task discussed months apart still belongs to the same coherent history.
+<img width="1919" height="839" alt="image" src="https://github.com/user-attachments/assets/a58db4d1-ad4a-4ae0-8094-7da5c5c18e06" />
+
 
 ### 3. Memory Management — Consolidation & Pruning
 
@@ -56,6 +60,7 @@ A background extractor turns recurring patterns into:
 - stable work facts  
 
 These semantic memories are injected automatically into prompts for long-term personalization.
+<img width="1107" height="580" alt="image" src="https://github.com/user-attachments/assets/4731242c-a4e1-4ab2-910e-8db17497a52f" />
 
 ### 5. Dynamic Retrieval + Reflect Agents
 
@@ -78,6 +83,10 @@ Process:
 - Outputs are merged into a single final message.
 
 This demonstrates real parallel tool use, not a toy example.
+<img width="1148" height="441" alt="image" src="https://github.com/user-attachments/assets/f077a46c-2308-4300-aa3b-110143e51d9a" />
+<img width="1500" height="637" alt="image" src="https://github.com/user-attachments/assets/0909398d-9bde-434d-994e-dc15ec7cc802" />
+
+
 
 ## Technical Architecture
 
