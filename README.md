@@ -3,10 +3,11 @@
 GossipAI is a lightweight, agent-style chat system I built to solve a real problem:
 AI chats don’t remember anything. Humans do. Careers depend on it.
 
-During my co-op, I realized how much growth gets lost: achievements, lessons, decisions, mistakes, insights. Traditional LLM chats collapse under long histories. GossipAI fixes that with an actual memory architecture — fast, structured, and retrieval-ready.
+During my co-op, I realized how much growth gets lost: achievements, lessons, decisions, mistakes, insights. Traditionally, we are advised to have work journals, but being a genZ I started doing it on chatgpt, just tell it what happened, boom recorded and refer when needed, but, one day that chat was so full, I could no longer add to it. GossipAI fixes that with an actual memory architecture — fast, structured, and retrieval-ready.
 
-This is not a “chat app.”
-It’s a personal knowledge layer that grows with you.
+This is not just a “chat app.”
+It's like you telling all your achievements, goals, failures to your best friend and they maintain the journal and you can use that whenever you want bullet points for a resume or reflection for the year-end meeting.
+
 ## Technical Architecture
 
 ### Backend (FastAPI)
