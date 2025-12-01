@@ -14,15 +14,24 @@ from qdrant_client.models import PointStruct, VectorParams, Distance
 from langchain_openai import OpenAIEmbeddings
 import uuid
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 from collections import defaultdict
+import json
 
 # Import memory models and functions
 from memory_models import EpisodicMemory, EmotionType, SemanticMemory, SemanticMemoryType
 from memory_functions import create_episodic_memory, extract_semantic_memories, get_semantic_context
 from episodic_memory import init_episodic_collection
 from semantic_memory import init_semantic_collection
+
+# Import calendar MCP (optional - will gracefully fail if not configured)
+try:
+    from calendar_mcp import get_calendar_mcp
+    CALENDAR_ENABLED = True
+except Exception as e:
+    print(f"Calendar MCP not available: {e}")
+    CALENDAR_ENABLED = False
 
 # Load environment
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
@@ -228,6 +237,10 @@ async def chat(payload: ChatRequest, background_tasks: BackgroundTasks) -> ChatR
     if semantic_context:
         final_system_prompt += f"\n\n{semantic_context}\n\nUse these facts naturally in your responses when relevant."
     
+    # Add calendar capability to system prompt
+    if CALENDAR_ENABLED:
+        final_system_prompt += "\n\nYou have access to the user's Google Calendar. You can create, view, and manage calendar events."
+    
     # Generate AI response
     messages = [
         {"role": "system", "content": final_system_prompt},
@@ -235,15 +248,142 @@ async def chat(payload: ChatRequest, background_tasks: BackgroundTasks) -> ChatR
         {"role": "user", "content": user_message},
     ]
     
+    # Define calendar tools for function calling
+    tools = []
+    if CALENDAR_ENABLED:
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_calendar_event",
+                    "description": "Create a new event in the user's Google Calendar",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {
+                                "type": "string",
+                                "description": "Title/summary of the event (e.g., 'Meeting with Sarah')"
+                            },
+                            "start_time": {
+                                "type": "string",
+                                "description": "Start time in ISO format or natural language (e.g., '2024-12-01T14:00:00' or 'tomorrow at 2pm')"
+                            },
+                            "duration_minutes": {
+                                "type": "integer",
+                                "description": "Duration in minutes (default: 60)",
+                                "default": 60
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Optional description or notes for the event"
+                            }
+                        },
+                        "required": ["summary", "start_time"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_calendar_events",
+                    "description": "Get upcoming events from the user's calendar",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "max_results": {
+                                "type": "integer",
+                                "description": "Maximum number of events to retrieve (default: 10)",
+                                "default": 10
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+    
     try:
         completion = client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
+            tools=tools if tools else None,
+            tool_choice="auto" if tools else None
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     
-    reply = completion.choices[0].message.content.strip()
+    # Handle tool calls
+    response_message = completion.choices[0].message
+    tool_calls = response_message.tool_calls
+    
+    if tool_calls:
+        # Execute tool calls
+        messages.append(response_message)
+        
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            
+            if function_name == "create_calendar_event":
+                # Parse time and create event
+                from dateutil import parser as date_parser
+                import parsedatetime
+                
+                cal = parsedatetime.Calendar()
+                start_str = function_args.get("start_time")
+                
+                # Try to parse the time
+                try:
+                    start_dt = date_parser.parse(start_str)
+                except:
+                    # Use parsedatetime for natural language
+                    time_struct, parse_status = cal.parse(start_str)
+                    start_dt = datetime(*time_struct[:6])
+                
+                duration = function_args.get("duration_minutes", 60)
+                end_dt = start_dt + timedelta(minutes=duration)
+                
+                calendar = get_calendar_mcp()
+                event = calendar.create_event(
+                    summary=function_args.get("summary"),
+                    start_time=start_dt,
+                    end_time=end_dt,
+                    description=function_args.get("description", "")
+                )
+                
+                function_response = json.dumps({
+                    "status": "success",
+                    "event": event,
+                    "message": f"Created event '{function_args.get('summary')}' at {start_dt.strftime('%B %d at %I:%M %p')}"
+                })
+                
+            elif function_name == "get_calendar_events":
+                calendar = get_calendar_mcp()
+                events = calendar.get_upcoming_events(
+                    max_results=function_args.get("max_results", 10)
+                )
+                function_response = json.dumps({
+                    "status": "success",
+                    "events": events,
+                    "count": len(events)
+                })
+            else:
+                function_response = json.dumps({"status": "error", "message": "Unknown function"})
+            
+            messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": function_response
+            })
+        
+        # Get final response with tool results
+        second_completion = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages
+        )
+        reply = second_completion.choices[0].message.content.strip()
+    else:
+        reply = response_message.content.strip()
     
     # Add messages to session buffer
     session = user_sessions[user_id]
@@ -483,6 +623,93 @@ Full-stack development & DevOps	                                                
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== CALENDAR ENDPOINTS ==========
+
+@app.get("/calendar/events")
+async def get_calendar_events(max_results: int = 10):
+    """Get upcoming calendar events"""
+    if not CALENDAR_ENABLED:
+        raise HTTPException(status_code=503, detail="Calendar not configured. See CALENDAR_SETUP.md")
+    
+    try:
+        calendar = get_calendar_mcp()
+        events = calendar.get_upcoming_events(max_results=max_results)
+        return {"events": events, "count": len(events)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Calendar error: {str(e)}")
+
+
+class CreateEventRequest(BaseModel):
+    summary: str
+    start_time: str  # ISO format
+    end_time: str
+    description: str = ""
+    location: str = ""
+
+
+@app.post("/calendar/create")
+async def create_calendar_event(request: CreateEventRequest):
+    """Create a new calendar event"""
+    if not CALENDAR_ENABLED:
+        raise HTTPException(status_code=503, detail="Calendar not configured")
+    
+    try:
+        from dateutil import parser
+        start_dt = parser.parse(request.start_time)
+        end_dt = parser.parse(request.end_time)
+        
+        calendar = get_calendar_mcp()
+        event = calendar.create_event(
+            summary=request.summary,
+            start_time=start_dt,
+            end_time=end_dt,
+            description=request.description,
+            location=request.location
+        )
+        
+        if event:
+            return {"status": "created", "event": event}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create event")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/calendar/event/{event_id}")
+async def delete_calendar_event(event_id: str):
+    """Delete a calendar event"""
+    if not CALENDAR_ENABLED:
+        raise HTTPException(status_code=503, detail="Calendar not configured")
+    
+    try:
+        calendar = get_calendar_mcp()
+        success = calendar.delete_event(event_id)
+        
+        if success:
+            return {"status": "deleted", "event_id": event_id}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete event")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/calendar/search")
+async def search_calendar(query: str, max_results: int = 10):
+    """Search calendar events"""
+    if not CALENDAR_ENABLED:
+        raise HTTPException(status_code=503, detail="Calendar not configured")
+    
+    try:
+        calendar = get_calendar_mcp()
+        events = calendar.search_events(query=query, max_results=max_results)
+        return {"events": events, "count": len(events)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn
