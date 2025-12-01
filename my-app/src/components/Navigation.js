@@ -35,6 +35,9 @@ export default function Navigation() {
             <Link href="/reflect" className={styles.navLink}>
               Reflect
             </Link>
+           <Link href="/stories" className={styles.navLink}>
+              Stories
+            </Link>
           </div>
         </div>
       </div>

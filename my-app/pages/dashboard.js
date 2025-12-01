@@ -1,57 +1,45 @@
 import { useEffect, useState, useRef } from "react";
-import styles from "@/styles/Dashboard.module.css";
-import Navigation from "@/components/Navigation";
+import Sidebar from "@/components/Sidebar";
 
 export default function Dashboard() {
   const [greeting, setGreeting] = useState("");
-  const [threads, setThreads] = useState([]);
-  const [activeThreadId, setActiveThreadId] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const bottomRef = useRef(null);
   const isInitialLoad = useRef(true);
 
-  const CHAT_API_URL =
-    process.env.NEXT_PUBLIC_CHAT_API_URL || "http://localhost:8000/chat";
+  const CHAT_API_URL = "http://localhost:8000/chat";
+  const CACHE_KEY = "gossip_chat_messages";
 
   const INITIAL_AI_MESSAGE = {
     sender: "ai",
     text: "Hey little hardworking fellow! How did your day go? I am so excited to hear!!",
+    timestamp: Date.now()
   };
 
-  const createThread = () => ({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    messages: [INITIAL_AI_MESSAGE],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  });
-
-  const activeThread = threads.find((thread) => thread.id === activeThreadId) || threads[0];
-  const messages = activeThread?.messages || [];
-
+  // Load messages from localStorage on mount
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem("gossip_threads");
+    const stored = window.localStorage.getItem(CACHE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
-      setThreads(parsed);
-      setActiveThreadId(parsed[0]?.id || null);
+      setMessages(parsed);
     } else {
-      const starter = createThread();
-      setThreads([starter]);
-      setActiveThreadId(starter.id);
+      setMessages([INITIAL_AI_MESSAGE]);
     }
   }, []);
 
+  // Save messages to localStorage whenever they change
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
       return;
     }
-    window.localStorage.setItem("gossip_threads", JSON.stringify(threads));
-  }, [threads]);
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify(messages));
+  }, [messages]);
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -70,47 +58,20 @@ export default function Dashboard() {
       content: msg.text,
     }));
 
-  const updateThreadMessages = (threadId, transform) => {
-    setThreads((prev) =>
-      prev.map((thread) =>
-        thread.id === threadId
-          ? {
-              ...thread,
-              messages: transform(thread.messages),
-              updatedAt: Date.now(),
-            }
-          : thread
-      )
-    );
-  };
-
-  const summarizeThread = (thread) => {
-    const source =
-      [...thread.messages]
-        .reverse()
-        .find((msg) => msg.sender === "user")?.text || thread.messages[0]?.text || "New chat";
-    return source.split(/\s+/).slice(0, 4).join(" ");
-  };
-
-  const startNewChat = () => {
-    const newThread = createThread();
-    setThreads((prev) => [newThread, ...prev]);
-    setActiveThreadId(newThread.id);
-    setInput("");
-    setError(null);
-  };
-
-  const switchThread = (threadId) => {
-    setActiveThreadId(threadId);
-    setInput("");
+  const clearChat = () => {
+    setMessages([INITIAL_AI_MESSAGE]);
+    window.localStorage.removeItem(CACHE_KEY);
     setError(null);
   };
 
   const sendMessage = async () => {
-    if (!activeThread || !input.trim() || isLoading) return;
+    if (!input.trim() || isLoading) return;
 
     const userText = input.trim();
-    updateThreadMessages(activeThread.id, (msgs) => [...msgs, { sender: "user", text: userText }]);
+    const userMessage = { sender: "user", text: userText, timestamp: Date.now() };
+    
+    // Add user message immediately
+    setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setError(null);
     setIsLoading(true);
@@ -130,7 +91,15 @@ export default function Dashboard() {
       }
 
       const data = await response.json();
-      updateThreadMessages(activeThread.id, (msgs) => [...msgs, { sender: "ai", text: data.reply }]);
+      const aiMessage = { 
+        sender: "ai", 
+        text: data.reply, 
+        timestamp: Date.now(),
+        episode_id: data.episode_id,
+        memory_used: data.memory_used
+      };
+      
+      setMessages((prev) => [...prev, aiMessage]);
     } catch (err) {
       setError(err.message || "Something went wrong");
     } finally {
@@ -139,94 +108,180 @@ export default function Dashboard() {
   };
 
   return (
-    <>
-      <Navigation brand="gossip.ai" />
+    <div style={{ display: "flex", minHeight: "100vh", background: "#0a0a0a" }}>
+      <Sidebar />
 
-      <div className={styles.layout}>
-        {/* SIDEBAR */}
-        <aside className={styles.sidebar}>
-          <div className={styles.sidebarHeader}>
-            <h2 className={styles.sidebarTitle}>Chats</h2>
-            <button className={styles.newChatBtn} onClick={startNewChat}>
-              + New Chat
+      <main style={{ 
+        flex: 1, 
+        padding: "2rem 3rem",
+        marginLeft: "280px",
+        overflowY: "auto",
+        display: "flex",
+        flexDirection: "column"
+      }}>
+          {/* Breadcrumb */}
+          <div style={{ 
+            display: "flex", 
+            alignItems: "center", 
+            gap: "0.5rem",
+            marginBottom: "2rem",
+            color: "#666",
+            fontSize: "0.9rem"
+          }}>
+            <span>Dashboard</span>
+            <span>›</span>
+            <span style={{ color: "white" }}>Chat</span>
+          </div>
+
+          {/* Header */}
+          <div style={{ 
+            display: "flex", 
+            justifyContent: "space-between", 
+            alignItems: "flex-start",
+            marginBottom: "2rem" 
+          }}>
+            <div>
+              <h1 style={{ 
+                fontSize: "2.5rem", 
+                fontWeight: "700",
+                marginBottom: "0.5rem",
+                color: "white"
+              }}>
+                {greeting}, <span style={{ 
+                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent"
+                }}>Gurmehak</span>
+              </h1>
+              <p style={{ color: "#888", fontSize: "1rem" }}>
+                Tell me about your day — wins, rants, progress. I'm here to listen.
+              </p>
+            </div>
+            <button
+              onClick={clearChat}
+              style={{
+                padding: "0.75rem 1.5rem",
+                borderRadius: "12px",
+                border: "1px solid #2a2a2a",
+                background: "#1a1a1a",
+                color: "#888",
+                fontWeight: "600",
+                cursor: "pointer",
+                fontSize: "0.9rem",
+                transition: "all 0.2s"
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.borderColor = "#ff6b6b";
+                e.target.style.color = "#ff6b6b";
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.borderColor = "#2a2a2a";
+                e.target.style.color = "#888";
+              }}
+            >
+              🗑️ Clear Chat
             </button>
           </div>
 
-          <div className={styles.storyList}>
-            {threads.length === 0 && (
-              <div className={styles.emptyStory}>No chats yet. Start one!</div>
-            )}
-            {threads.map((thread) => (
-              <button
-                key={thread.id}
-                className={
-                  thread.id === activeThread?.id
-                    ? `${styles.story} ${styles.activeStory}`
-                    : styles.story
-                }
-                onClick={() => switchThread(thread.id)}
-              >
-                <div className={styles.storySummary}>{summarizeThread(thread)}</div>
-                <div className={styles.storyMeta}>
-                  {new Date(thread.updatedAt).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </div>
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        {/* MAIN CHAT */}
-        <main className={styles.main}>
-          <div className={styles.header}>
-            <h1 className={styles.greeting}>
-              {greeting}, ready to spill the tea?
-            </h1>
-            <p className={styles.subtitle}>
-              Tell me about your day — wins, rants, progress.
-            </p>
-          </div>
-
-          <div className={styles.chatWindow}>
+          {/* Chat Window */}
+          <div style={{
+            flex: 1,
+            overflowY: "auto",
+            marginBottom: "2rem",
+            display: "flex",
+            flexDirection: "column",
+            gap: "1rem"
+          }}>
             {messages.map((msg, i) => (
               <div
                 key={i}
-                className={
-                  msg.sender === "user"
-                    ? styles.userBubble
-                    : styles.aiBubble
-                }
+                style={{
+                  display: "flex",
+                  justifyContent: msg.sender === "user" ? "flex-end" : "flex-start"
+                }}
               >
-                {msg.text}
+                <div style={{
+                  maxWidth: "70%",
+                  padding: "1rem 1.5rem",
+                  borderRadius: "16px",
+                  background: msg.sender === "user" ? "#7c3aed" : "#1a1a1a",
+                  color: "white",
+                  border: msg.sender === "user" ? "none" : "1px solid #2a2a2a",
+                  lineHeight: "1.6"
+                }}>
+                  {msg.text}
+                </div>
               </div>
             ))}
 
             {error && (
-              <div className={styles.aiBubble}>
-                {error} — please try again in a bit.
+              <div style={{
+                display: "flex",
+                justifyContent: "flex-start"
+              }}>
+                <div style={{
+                  maxWidth: "70%",
+                  padding: "1rem 1.5rem",
+                  borderRadius: "16px",
+                  background: "#ff6b6b20",
+                  color: "#ff6b6b",
+                  border: "1px solid #ff6b6b40",
+                  lineHeight: "1.6"
+                }}>
+                  {error} — please try again in a bit.
+                </div>
               </div>
             )}
 
             <div ref={bottomRef} />
           </div>
 
-          <div className={styles.inputBar}>
+          {/* Input Bar */}
+          <div style={{
+            display: "flex",
+            gap: "1rem",
+            padding: "1.5rem",
+            background: "#1a1a1a",
+            borderRadius: "16px",
+            border: "1px solid #2a2a2a"
+          }}>
             <input
               value={input}
               placeholder="Message gossip.ai…"
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              className={styles.input}
               disabled={isLoading}
+              style={{
+                flex: 1,
+                padding: "0.75rem",
+                background: "transparent",
+                border: "none",
+                color: "white",
+                fontSize: "1rem",
+                outline: "none"
+              }}
             />
-            <button onClick={sendMessage} className={styles.send} disabled={isLoading}>
-              {isLoading ? "…" : "➤"}
+            <button 
+              onClick={sendMessage} 
+              disabled={isLoading}
+              style={{
+                padding: "0.75rem 2rem",
+                borderRadius: "12px",
+                border: "none",
+                background: isLoading ? "#444" : "#7c3aed",
+                color: "white",
+                fontWeight: "600",
+                cursor: isLoading ? "not-allowed" : "pointer",
+                fontSize: "1.5rem",
+                transition: "all 0.2s"
+              }}
+              onMouseEnter={(e) => !isLoading && (e.target.style.background = "#6d28d9")}
+              onMouseLeave={(e) => !isLoading && (e.target.style.background = "#7c3aed")}
+            >
+              {isLoading ? "⏳" : "➤"}
             </button>
           </div>
         </main>
-      </div>
-    </>
+    </div>
   );
 }
