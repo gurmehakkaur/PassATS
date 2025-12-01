@@ -1,290 +1,207 @@
 """
 Episodic Memory System
-Stores interaction episodes as narrative stories with embeddings
+Handles creation and storage of episodic memories with journal labels
 """
 
-import os
-import time
-import uuid as uuid_lib
-from typing import List, Optional, Dict, Any
+from typing import Optional
 from datetime import datetime
-
+from openai import OpenAI
+from langchain_openai import OpenAIEmbeddings
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance, PointStruct
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from qdrant_client.models import PointStruct, VectorParams, Distance
 from dotenv import load_dotenv
+import uuid
+import os
 
-from memory_models import (
-    EpisodicMemory, 
-    EpisodicPayload, 
-    EmotionType,
-    StoreEpisodeRequest,
-    StoreEpisodeResponse
-)
+from memory_models import EpisodicMemory, EmotionType
 
 # Load .env from parent directory
-env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
-load_dotenv(env_path)
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-# Verify environment variables are loaded
-if not os.getenv("OPENAI_API_KEY"):
-    raise ValueError(f"OPENAI_API_KEY not found. Checked .env at: {os.path.abspath(env_path)}")
+# Initialize clients
+client = OpenAI()
 
-# ========== SETUP ==========
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+# Lazy-load embedding model
+_embedding_model = None
 
-qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-EPISODIC_COLLECTION = "episodic_memory"
-
-embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
-episode_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+def get_embedding_model():
+    """Lazy-load the embedding model"""
+    global _embedding_model
+    if _embedding_model is None:
+        _embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
+    return _embedding_model
 
 
-# ========== COLLECTION INITIALIZATION ==========
-def init_episodic_collection():
-    """Initialize or recreate the episodic memory collection"""
+def init_episodic_collection(qdrant_client: QdrantClient, collection_name: str):
+    """Initialize the episodic memory collection"""
     try:
         collections = qdrant_client.get_collections().collections
         collection_names = [c.name for c in collections]
         
-        if EPISODIC_COLLECTION not in collection_names:
+        if collection_name not in collection_names:
             qdrant_client.create_collection(
-                collection_name=EPISODIC_COLLECTION,
+                collection_name=collection_name,
                 vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
             )
-            print(f"✅ Created collection: {EPISODIC_COLLECTION}")
+            print(f"Created collection: {collection_name}")
         else:
-            print(f"✅ Collection exists: {EPISODIC_COLLECTION}")
+            print(f"Collection exists: {collection_name}")
     except Exception as e:
-        print(f"❌ Error initializing collection: {e}")
+        print(f"Error initializing collection: {e}")
 
 
-# ========== EPISODE CREATION ==========
-def create_episodic_story(
-    user_message: str,
-    assistant_response: str,
-    conversation_history: Optional[List[Dict[str, str]]] = None
-) -> EpisodicMemory:
+def get_or_create_journal_label(conversation_text: str, qdrant_client: QdrantClient, collection_name: str) -> str:
     """
-    Uses LLM to generate an episodic memory story from the conversation
+    Determine the ONE journal label for this conversation.
+    Check existing labels first, create new one if needed.
     
-    Returns:
-        EpisodicMemory object with story, emotion, entities, etc.
+    Examples:
+    - "Gifts to colleagues"
+    - "Networking with director"
+    - "Career growth discussions"
     """
     
-    # Build context
-    context = ""
-    if conversation_history:
-        context = "\n".join([
-            f"{msg['role']}: {msg['content']}" 
-            for msg in conversation_history[-3:]  # Last 3 messages for context
-        ])
+    # Get all existing journal labels
+    try:
+        results = qdrant_client.scroll(
+            collection_name=collection_name,
+            limit=100,
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        existing_labels = set()
+        for point in results[0]:
+            label = point.payload.get("journal_label")
+            if label:
+                existing_labels.add(label)
+        
+        existing_labels_str = "\n".join(f"- {label}" for label in existing_labels) if existing_labels else "No existing labels yet"
+        
+    except:
+        existing_labels_str = "No existing labels yet"
     
-    context += f"\nuser: {user_message}\nassistant: {assistant_response}"
-    
-    # Prompt for episodic extraction
-    prompt = f"""
-You are an episodic memory extractor for a personal AI assistant.
+    # Ask LLM to pick existing label or create new one
+    prompt = f"""You are organizing a personal journal. Analyze this conversation and determine the ONE journal label it belongs to.
 
-Analyze this conversation and create an episodic memory entry.
+EXISTING JOURNAL LABELS:
+{existing_labels_str}
 
 CONVERSATION:
-{context}
+{conversation_text[:1500]}
 
-Return a JSON object with:
-- "story": A 2-3 sentence narrative summary of what happened (from user's perspective)
-- "emotion": Primary emotion (one of: happy, sad, anxious, excited, frustrated, neutral, confused, proud)
-- "key_entities": List of important people, projects, or things mentioned
-- "user_intent": What the user wanted or was trying to accomplish (1 sentence)
-- "importance": Float 0-1, how personally meaningful this is
-- "tags": List of 3-5 searchable tags
+RULES:
+1. If this conversation fits an EXISTING label, use that EXACT label (copy it exactly)
+2. If it doesn't fit any existing label, create a NEW descriptive label
+3. Label should be specific and descriptive (e.g., "Gifts to colleagues", "Networking with director")
+4. Use title case
+5. Keep it 2-5 words
 
-Focus on:
-- What happened
-- How the user felt
-- What they wanted
-- Who was involved
-
-Return ONLY valid JSON, no markdown.
-"""
+Return ONLY the label text, nothing else."""
 
     try:
-        response = episode_llm.invoke(prompt).content.strip()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        
+        label = response.choices[0].message.content.strip()
+        label = label.strip('"').strip("'").strip()
+        
+        print(f"📌 Journal label: {label}")
+        return label
+        
+    except Exception as e:
+        print(f"Error determining journal label: {e}")
+        return "General Journal"
+
+
+def create_episodic_memory(conversation_summary: str, qdrant_client: QdrantClient, collection_name: str) -> Optional[EpisodicMemory]:
+    """
+    Create an episodic memory from a conversation summary.
+    Uses LLM to extract story, emotion, entities, etc.
+    """
+    
+    # Get journal label first
+    journal_label = get_or_create_journal_label(conversation_summary, qdrant_client, collection_name)
+    
+    # Extract episodic details
+    prompt = f"""Analyze this conversation and extract episodic memory details.
+
+CONVERSATION:
+{conversation_summary}
+
+Return a JSON object with:
+- "story": A 2-3 sentence narrative summary (from user's perspective)
+- "emotion": Primary emotion (happy, sad, anxious, excited, frustrated, neutral, confused, proud)
+- "key_entities": List of important people, projects, or things mentioned
+- "user_intent": What the user wanted to accomplish (1 sentence)
+- "importance": Float 0-1, how personally meaningful this is
+
+Return ONLY valid JSON, no markdown."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        
+        content = response.choices[0].message.content.strip()
         
         # Clean markdown if present
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
         
-        episode_data = eval(response)  # Safe since we control the LLM output
+        import json
+        episode_data = json.loads(content)
         
-        # Create EpisodicMemory object with proper UUID
+        # Create EpisodicMemory object
         episode = EpisodicMemory(
-            id=str(uuid_lib.uuid4()),
+            id=str(uuid.uuid4()),
             timestamp=datetime.now(),
             story=episode_data.get("story", ""),
             emotion=EmotionType(episode_data.get("emotion", "neutral")),
             key_entities=episode_data.get("key_entities", []),
             user_intent=episode_data.get("user_intent"),
             importance=float(episode_data.get("importance", 0.5)),
-            tags=episode_data.get("tags", []),
-            raw_context=context[:500]  # Store first 500 chars
+            tags=[journal_label],
+            journal_label=journal_label,
+            raw_context=conversation_summary[:500]
         )
-        
-        return episode
-        
-    except Exception as e:
-        print(f"❌ Error creating episode: {e}")
-        # Fallback episode
-        return EpisodicMemory(
-            id=str(uuid_lib.uuid4()),
-            timestamp=datetime.now(),
-            story=f"User said: {user_message[:100]}...",
-            importance=0.3,
-            tags=["auto-generated"],
-            raw_context=context[:500]
-        )
-
-
-# ========== STORAGE ==========
-def store_episode(episode: EpisodicMemory) -> bool:
-    """
-    Store an episodic memory in Qdrant with vector embedding
-    
-    Args:
-        episode: EpisodicMemory object to store
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        # Generate embedding from the story
-        vector = embedding_model.embed_query(episode.story)
-        
-        # Prepare payload
-        payload = {
-            "story": episode.story,
-            "emotion": episode.emotion.value if episode.emotion else None,
-            "key_entities": episode.key_entities,
-            "user_intent": episode.user_intent,
-            "importance": episode.importance,
-            "tags": episode.tags,
-            "timestamp": episode.timestamp.timestamp(),
-            "raw_context": episode.raw_context
-        }
         
         # Store in Qdrant
+        vector = get_embedding_model().embed_query(episode.story)
+        
         qdrant_client.upsert(
-            collection_name=EPISODIC_COLLECTION,
+            collection_name=collection_name,
             points=[
                 PointStruct(
                     id=episode.id,
                     vector=vector,
-                    payload=payload
+                    payload={
+                        "story": episode.story,
+                        "emotion": episode.emotion.value if episode.emotion else None,
+                        "key_entities": episode.key_entities,
+                        "user_intent": episode.user_intent,
+                        "importance": episode.importance,
+                        "tags": episode.tags,
+                        "journal_label": episode.journal_label,
+                        "timestamp": episode.timestamp.timestamp(),
+                        "raw_context": episode.raw_context
+                    }
                 )
             ]
         )
         
-        print(f"✅ Stored episode: {episode.id}")
-        return True
+        print(f"Stored episodic memory: {episode.id} - Journal: {journal_label}")
+        return episode
         
     except Exception as e:
-        print(f"❌ Error storing episode: {e}")
-        return False
-
-
-# ========== RETRIEVAL ==========
-def retrieve_episodes(
-    query: str,
-    limit: int = 5,
-    min_importance: float = 0.0,
-    emotion_filter: Optional[EmotionType] = None,
-    tag_filter: Optional[List[str]] = None
-) -> List[EpisodicMemory]:
-    """
-    Retrieve relevant episodic memories based on semantic similarity
-    
-    Args:
-        query: Search query
-        limit: Max number of episodes to return
-        min_importance: Minimum importance threshold
-        emotion_filter: Filter by specific emotion
-        tag_filter: Filter by tags
-        
-    Returns:
-        List of EpisodicMemory objects
-    """
-    try:
-        # Generate query embedding
-        query_vector = embedding_model.embed_query(query)
-        
-        # Build filter conditions
-        filter_conditions = []
-        if min_importance > 0:
-            filter_conditions.append({
-                "key": "importance",
-                "range": {"gte": min_importance}
-            })
-        
-        # Search using query_points
-        results = qdrant_client.query_points(
-            collection_name=EPISODIC_COLLECTION,
-            query=query_vector,
-            limit=limit
-        ).points
-        
-        # Convert to EpisodicMemory objects
-        episodes = []
-        for hit in results:
-            payload = hit.payload
-            episode = EpisodicMemory(
-                id=hit.id,
-                timestamp=datetime.fromtimestamp(payload.get("timestamp", time.time())),
-                story=payload.get("story", ""),
-                emotion=EmotionType(payload["emotion"]) if payload.get("emotion") else None,
-                key_entities=payload.get("key_entities", []),
-                user_intent=payload.get("user_intent"),
-                importance=payload.get("importance", 0.5),
-                tags=payload.get("tags", []),
-                raw_context=payload.get("raw_context")
-            )
-            episodes.append(episode)
-        
-        return episodes
-        
-    except Exception as e:
-        print(f"❌ Error retrieving episodes: {e}")
-        return []
-
-
-# ========== MAIN PIPELINE ==========
-def save_interaction_as_episode(
-    user_message: str,
-    assistant_response: str,
-    conversation_history: Optional[List[Dict[str, str]]] = None
-) -> StoreEpisodeResponse:
-    """
-    Complete pipeline: Create episode → Store → Return response
-    
-    This is called after every user interaction
-    """
-    # 1. Create episodic story
-    episode = create_episodic_story(user_message, assistant_response, conversation_history)
-    
-    # 2. Store in vector DB
-    success = store_episode(episode)
-    
-    # 3. Return response
-    return StoreEpisodeResponse(
-        status="stored" if success else "failed",
-        episode_id=episode.id,
-        story=episode.story,
-        importance=episode.importance,
-        emotion=episode.emotion.value if episode.emotion else None
-    )
-
-
-# Initialize collection on import
-init_episodic_collection()
+        print(f"Error creating episodic memory: {e}")
+        import traceback
+        traceback.print_exc()
+        return None

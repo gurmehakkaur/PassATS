@@ -21,6 +21,8 @@ from collections import defaultdict
 # Import memory models and functions
 from memory_models import EpisodicMemory, EmotionType, SemanticMemory, SemanticMemoryType
 from memory_functions import create_episodic_memory, extract_semantic_memories, get_semantic_context
+from episodic_memory import init_episodic_collection
+from semantic_memory import init_semantic_collection
 
 # Load environment
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
@@ -82,29 +84,8 @@ app.add_middleware(
 async def startup_event():
     """Initialize Qdrant collections on server startup"""
     try:
-        collections = qdrant_client.get_collections().collections
-        collection_names = [c.name for c in collections]
-        
-        # Initialize episodic memory collection
-        if EPISODIC_COLLECTION not in collection_names:
-            qdrant_client.create_collection(
-                collection_name=EPISODIC_COLLECTION,
-                vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
-            )
-            print(f"Created collection: {EPISODIC_COLLECTION}")
-        else:
-            print(f"Collection exists: {EPISODIC_COLLECTION}")
-        
-        # Initialize semantic memory collection
-        if SEMANTIC_COLLECTION not in collection_names:
-            qdrant_client.create_collection(
-                collection_name=SEMANTIC_COLLECTION,
-                vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
-            )
-            print(f"Created collection: {SEMANTIC_COLLECTION}")
-        else:
-            print(f"Collection exists: {SEMANTIC_COLLECTION}")
-            
+        init_episodic_collection(qdrant_client, EPISODIC_COLLECTION)
+        init_semantic_collection(qdrant_client, SEMANTIC_COLLECTION)
     except Exception as e:
         print(f"Error initializing collections: {e}")
 
@@ -442,14 +423,9 @@ User's Question: {query}
 Relevant Conversations:
 {context}
 
-Provide a thoughtful, empathetic reflection that:
-- Identifies patterns in their journey
-- Highlights growth and progress
-- Addresses their specific question
-- Offers perspective on alignment with goals
-- Uses a warm, supportive tone
-
-Format as flowing paragraphs, not bullet points."""
+Based on whatever user has achieved so far tell help them recall what they have done, what they thought of doing,
+how far are they, strictly help user reflect on whatever they question. Be that supportive good listner friend 
+who remmebers every minute detail"""
 
         elif agent_type == "meeting":
             system_prompt = f"""You are a professional career advisor preparing talking points for a work meeting.
@@ -458,15 +434,9 @@ User's Request: {query}
 
 Relevant Work Context:
 {context}
-
-Generate professional talking points that:
-- Highlight key achievements and contributions
-- Show measurable impact where possible
-- Are concise and meeting-appropriate
-- Focus on value delivered
-- Use professional language
-
-Format as clear bullet points with strong action verbs."""
+Strictly based on user question create a summary of SWOT which they can use to reflect on their work in front of 
+co-worker/year-end evaluation or manager one-to-one. The sole purpose is to help user remeber the impact they created
+and any problems they faced/"""
 
         else:  # resume
             system_prompt = f"""You are an expert resume writer. Create compelling, ATS-friendly bullet points.
@@ -476,16 +446,23 @@ User's Request: {query}
 Relevant Experience:
 {context}
 
-Generate 5-7 resume bullet points that:
-- Start with strong action verbs
-- Include measurable results/impact
-- Align with the skills/role mentioned
-- Are ATS-optimized
-- Follow this format: "Action verb + what you did + measurable result/impact"
-
-Example: "Developed full-stack web application using React and Python, reducing processing time by 40%"
-
-Format as bullet points only, ready to copy-paste."""
+The sole purpose is to create bullet points that can be pasted on resume. Don't add vague points, everything should be 
+quantified with clear impact, examples:Royal Bank Of Canada (RBC)                                                                                                                                                 May 2025 – Present           
+Full-stack development & DevOps	                                                                       View Repo 
+•	Developed full-stack app with Vue.js frontend and Node.js/Express backend for CCT Lab to handle asset reservations.
+•	Owned the full software development lifecycle— acting as BA and DevOps in addition to a developer.
+•	Gathered and refined requirements by engaging both admins and QE end-users; quickly learned asset management and configuration processes, profiles, and lab workflows to translate them into technical features.
+•	Redesigned and restructured the database to align with requested enhancements and evolving business requirements. 
+•	Became deployments subject matter expert while independently configuring HeliosV2 CI/CD pipelines from scratch (OCP4, Kubernetes, GitHub Actions), currently working on Azure Single sign-on. 
+•	Managed workflow using GitHub, creating milestones, epics, and issues to ensure a streamlined, ticket-based agile delivery.
+•	Using Ansible playbooks to automate asset configurations for the Lab, replacing manual software installation and validation.
+    Rest API Testing	                                                                     
+•	Used Swagger to implement RESTful workflows (headers, authorization, dynamic payloads) in Rest Assured for API testing.
+•	Currently working on an LLM model to achieve prompt-based generation of test cases in RestAssured using Windsurf.   
+•	Optimized existing API test validation logic by replacing 35+ redundant looping tests with a set-based algorithm, reducing execution from hundreds of calls to <20 and ensuring O(1) lookups.
+•	Designed reusable prompts and templates for QE team, cutting test-writing effort from 5 days to 1.5 days.
+•	Supported multi-environment testing (QAT, IST, etc.) by externalizing hardcoded values into JSON configs and proxy settings.
+"""
 
         # Generate response
         response = client.chat.completions.create(
