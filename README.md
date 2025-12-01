@@ -10,6 +10,7 @@ It's like you telling all your achievements, goals, failures to your best friend
 <img width="1919" height="871" alt="image" src="https://github.com/user-attachments/assets/256d7bc4-9576-4897-80c8-2e5829e9bea7" />
 
 
+
 ## TL;DR (What Actually Matters)
 
 - We don’t store raw chats — we summarize them.
@@ -74,6 +75,8 @@ A decision agent selects the correct retrieval tool for each query:
 - Informal Overview Agent — quick life or project statuses  
 
 The app uses agent orchestration to route queries and merge outputs cleanly.
+<img width="1895" height="794" alt="image" src="https://github.com/user-attachments/assets/ce47862e-22ae-4aee-af15-b5bf75cf2733" />
+
 
 ### 6. MCP Calendar + Fan-Out Pattern
 
