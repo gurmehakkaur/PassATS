@@ -1,12 +1,83 @@
 # GossipAI — Memory-Augmented Personal Work Companion
 
-GossipAI is a lightweight, agent-style chat system I built to solve a real problem:
-AI chats don’t remember anything. Humans do. Careers depend on it.
+GossipAI is a chat-to-journal system I built to solve a real problem.
 
 During my co-op, I realized how much growth gets lost: achievements, lessons, decisions, mistakes, insights. Traditionally, we are advised to have work journals, but being a genZ I started doing it on chatgpt, just tell it what happened, boom recorded and refer when needed, but, one day that chat was so full, I could no longer add to it. GossipAI fixes that with an actual memory architecture — fast, structured, and retrieval-ready.
 
 This is not just a “chat app.”
 It's like you telling all your achievements, goals, failures to your best friend and they maintain the journal and you can use that whenever you want bullet points for a resume or reflection for the year-end meeting.
+
+## TL;DR (What Actually Matters)
+
+- We don’t store raw chats — we summarize them.
+- Summaries become episodic memories (journal entries) with tags, emotion, and importance.
+- Smart consolidation & pruning: new summaries are matched to existing episodes when appropriate.
+- Semantic memory extracts stable facts/traits over time and is injected into the prompt.
+- Dynamic retrieval + Reflect agents: personal reflection, resume bullets, or informal overview.
+- MCP calendar (fully working) + fan-out orchestration for parallel scheduling.
+- Built with FastAPI, Next.js, Qdrant, OpenAI embeddings/LLMs.
+
+## Key Features
+
+### 1. Episodic Memory — Summaries, Not Logs
+
+After natural pauses (60s idle), the system summarizes the recent conversation into a story chunk containing:
+- story  
+- tags  
+- emotion  
+- intent  
+- importance  
+
+This becomes an episode — a single, meaningful journal entry.
+
+### 2. Smart Tagging & Consolidation
+
+Before creating a new episode, the system checks existing journal topics:
+
+- If the new story matches an existing episode (semantic similarity, tag overlap, recency/importance rules), it is appended to that journal.
+- If not, a new episode is created.
+
+This creates topic-centric journals where a task discussed months apart still belongs to the same coherent history.
+
+### 3. Memory Management — Consolidation & Pruning
+
+The system periodically:
+- consolidates overlapping episodes,
+- prunes low-importance duplicates,
+- re-scores episode importance by recency and frequency.
+
+The memory store stays lean and high-signal.
+
+### 4. Semantic Memory — Who You Are
+
+A background extractor turns recurring patterns into:
+- traits  
+- preferences  
+- stable work facts  
+
+These semantic memories are injected automatically into prompts for long-term personalization.
+
+### 5. Dynamic Retrieval + Reflect Agents
+
+A decision agent selects the correct retrieval tool for each query:
+
+- Personal Reflection Agent — deep emotional or narrative analysis  
+- Professional Bullets Agent — resume-ready achievements  
+- Informal Overview Agent — quick life or project statuses  
+
+The app uses agent orchestration to route queries and merge outputs cleanly.
+
+### 6. MCP Calendar + Fan-Out Pattern
+
+Example: “Book a meeting with Sarah tomorrow at 5pm.”
+
+Process:
+- Episodic memory is saved.
+- CalendarAgent creates the Google Calendar event via OAuth2.
+- Logging, notifications, and follow-up tasks run in parallel (fan-out).
+- Outputs are merged into a single final message.
+
+This demonstrates real parallel tool use, not a toy example.
 
 ## Technical Architecture
 
@@ -42,100 +113,6 @@ This separation allows different retrieval strategies. Episodic memories are que
 
 ### Frontend (Next.js + React)
 The frontend is built with Next.js and React, prioritizing clean UX and responsive design. Tailwind CSS handles styling with a custom color scheme that maintains consistency across pages.
-## Core Features
-
-### 1. Conversational AI Chat
-The main interface is a real-time chat where you can talk about anything on your mind. The AI maintains a warm, empathetic tone and actively encourages you to share more. It's built on GPT-4o and designed to feel like talking to a supportive colleague rather than a robotic assistant. 
-
-**Screenshot needed: Main chat interface showing conversation**
-
-### 2. Two-Tier Memory Architecture
-
-#### Episodic Memory (Journal System)
-Every conversation you have is automatically processed into structured episodic memories. These aren't just raw transcripts - the system uses an LLM to extract:
-- A narrative summary from your perspective
-- The primary emotion you were feeling
-- Key entities (people, projects, things mentioned)
-- Your intent in the conversation
-- An importance score
-
-The unique aspect is the journal labeling system. Each memory is assigned to a persistent topic label like "Gifts to Colleagues" or "Networking with Director". If you mention the same topic weeks or months later, it gets grouped under the same label. This creates a personal journal organized by themes rather than chronology.
-
-**Screenshot needed: Journal/Stories page showing expandable journal cards**
-
-#### Semantic Memory (Long-term Facts)
-The system periodically analyzes your episodic memories to extract stable, general facts about you:
-- Personality traits
-- Preferences and values
-- Stable facts (job, relationships, etc.)
-- Behavioral patterns
-- Important relationships
-
-These semantic memories are automatically injected into the system prompt for every conversation, allowing the AI to personalize its responses based on what it knows about you.
-
-### 3. Idle Detection & Batch Processing
-The system doesn't process every single message immediately. Instead, it uses a 60-second idle timer. When you stop chatting, it waits to see if you're done with that conversation thread. Once you've been idle for a minute, it:
-1. Summarizes the entire conversation chunk
-2. Creates an episodic memory with a journal label
-3. Periodically extracts semantic memories from recent episodes
-4. Stores everything in a Qdrant vector database
-
-This approach reduces API calls and creates more coherent memory units rather than fragmenting every message.
-
-### 4. Journal Page
-The Stories/Journal page displays all your episodic memories organized by journal labels. Each label appears as an expandable card showing:
-- The journal topic (e.g., "Career Growth Discussions")
-- Total number of entries under that topic
-- All conversation summaries related to that topic
-- Timestamps and emotional context
-
-All entries are expanded by default for easy browsing. The language is first-person ("My Journal", "My Entries") to emphasize that this is your personal space.
-
-**Screenshot needed: Expanded journal card showing multiple entries**
-
-### 5. Reflect Page - AI-Powered Introspection
-This page lets you query your entire conversation history using specialized AI agents:
-
-- **Personal Reflection Agent**: Provides deep, thoughtful analysis of your experiences and emotional patterns
-- **Informal Overview Agent**: Gives you a casual, friendly summary of what's been going on
-- **Resume Bullet Points Agent**: Extracts professional achievements and formats them as resume-ready bullet points
-
-Each agent searches through your episodic memories and generates insights based on your actual conversations. It's like having a therapist, friend, and career coach all analyzing your journal.
-
-**Screenshot needed: Reflect page with agent selection and generated insights**
-
-### 6. Goals Tracking
-A dedicated page for setting and tracking personal goals. Currently supports:
-- Adding goals with titles and descriptions
-- Categorizing goals (Career, Health, Personal, Financial, Learning)
-- Visual progress bars (hardcoded for now, will be conversation-driven later)
-- Category-specific color coding and icons
-
-The plan is to have the AI automatically update goal progress based on your conversations, but for now it provides a structured way to define what you're working toward.
-
-**Screenshot needed: Goals page with multiple goal cards**
-
-### 7. Google Calendar Integration (MCP)
-The system integrates with Google Calendar using the Model Context Protocol. The AI has function calling capabilities to:
-- View your upcoming calendar events
-- Create new events from natural language ("Schedule a meeting with Sarah tomorrow at 2pm")
-- Parse flexible time formats (ISO timestamps or natural language)
-- Set event durations and descriptions
-
-The integration uses OAuth 2.0 for secure authentication. 
-
-### 8. Vector Search
-All episodic and semantic memories are stored in Qdrant with embeddings generated by OpenAI's text-embedding-3-small model. This enables:
-- Semantic search across your conversation history
-- Retrieval of relevant memories for context injection
-- Similarity-based grouping of related conversations
-
-**Key Design Decisions:**
-- Server-side rendering disabled in favor of client-side for this use case (single-user, local deployment)
-- Real-time chat updates using controlled components and state management
-- Expandable journal cards with smooth animations for better information density
-- Category-based color coding for goals (visual hierarchy)
-- First-person language throughout ("My Journal", "My Entries") for personal feel
 
 **Page Structure:**
 - `dashboard.js` - Main chat interface with message history and input
