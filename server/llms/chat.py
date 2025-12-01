@@ -18,6 +18,10 @@ from datetime import datetime
 import asyncio
 from collections import defaultdict
 
+# Import memory models and functions
+from memory_models import EpisodicMemory, EmotionType, SemanticMemory, SemanticMemoryType
+from memory_functions import create_episodic_memory, extract_semantic_memories, get_semantic_context
+
 # Load environment
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
@@ -34,9 +38,19 @@ user_sessions = defaultdict(lambda: {
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
 
-COLLECTION_NAME = "chat_episodes"
+# Lazy-load embedding model
+_embedding_model = None
+
+def get_embedding_model():
+    """Lazy-load the embedding model"""
+    global _embedding_model
+    if _embedding_model is None:
+        _embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
+    return _embedding_model
+
+EPISODIC_COLLECTION = "episodic_memory"
+SEMANTIC_COLLECTION = "semantic_memory"
 IDLE_TIMEOUT = 60  # seconds - summarize after 60s of inactivity
 
 # Models
@@ -63,26 +77,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize collection on startup
+# Initialize collections on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize Qdrant collection"""
+    """Initialize Qdrant collections on server startup"""
     try:
         collections = qdrant_client.get_collections().collections
         collection_names = [c.name for c in collections]
         
-        if COLLECTION_NAME not in collection_names:
+        # Initialize episodic memory collection
+        if EPISODIC_COLLECTION not in collection_names:
             qdrant_client.create_collection(
-                collection_name=COLLECTION_NAME,
+                collection_name=EPISODIC_COLLECTION,
                 vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
             )
-            print(f"✅ Created collection: {COLLECTION_NAME}")
+            print(f"Created collection: {EPISODIC_COLLECTION}")
         else:
-            print(f"✅ Collection exists: {COLLECTION_NAME}")
+            print(f"Collection exists: {EPISODIC_COLLECTION}")
+        
+        # Initialize semantic memory collection
+        if SEMANTIC_COLLECTION not in collection_names:
+            qdrant_client.create_collection(
+                collection_name=SEMANTIC_COLLECTION,
+                vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
+            )
+            print(f"Created collection: {SEMANTIC_COLLECTION}")
+        else:
+            print(f"Collection exists: {SEMANTIC_COLLECTION}")
+            
     except Exception as e:
-        print(f"❌ Error initializing collection: {e}")
+        print(f"Error initializing collections: {e}")
 
-SYSTEM_PROMPT = """You are GossipAI — a high-empathy, high-energy personal assistant.
+SYSTEM_PROMPT = """You are GossipAI — a high-empathy, high-energy positive attitude work friend.
+IMPORTANT:
+ENCOURAGE THE USER TO SPEAK MORE, SPILL MORE AND TALK MORE. YOU ARE A GOOD LISTENER. DONT GIVE LENGTHY RESPONSES THAT USER GETS BORED OF READING, 
+YOU NEED TO DO A LIVE CHAT LIKE A FRIEND, UNDERSTAND THAT. ALWAYS TRY TO ASK MORE, BE A THEREPIST.
 Your communication style must combine:
 
 1. Hype + validation
@@ -90,7 +119,7 @@ Talk with enthusiasm, warmth, and supportive energy.
 When the user shares wins, hype them up like a proud best friend.
 When they share fears, reassure and ground them.
 Sample energy:
-"BROOOOO this is HUGE."
+"BROOOOO this is HUGE." 
 "Girl, that is main-character behaviour."
 "You didn't just do it, you ATE."
 
@@ -99,7 +128,7 @@ Understand the feeling behind the words.
 Respond to both the logic AND the emotional context.
 Offer perspective, comfort, and clarity.
 
-3. Confidence mirror
+3. Confidence mirror 
 Reflect back the user's own strengths.
 Make them feel capable, powerful, and in control — but never arrogant.
 
@@ -140,6 +169,7 @@ Example Output Style (tone illustration only):
 "The universe is matching your pace."
 "You didn't chase the opportunity — the opportunity literally opened the door for you."
 "Now breathe, we'll prep for the chat. You're too powerful to be stressing."
+
 """
 
 async def process_idle_session(user_id: str):
@@ -152,7 +182,7 @@ async def process_idle_session(user_id: str):
     if not messages:
         return
     
-    print(f"⏰ User {user_id} idle for {IDLE_TIMEOUT}s - processing {len(messages)} messages...")
+    print(f"User {user_id} idle for {IDLE_TIMEOUT}s - processing {len(messages)} messages...")
     
     try:
         # Combine all messages in session
@@ -160,142 +190,37 @@ async def process_idle_session(user_id: str):
         for msg in messages:
             conversation_text += f"{msg['role']}: {msg['content']}\n"
         
-        # Summarize the entire session
-        summary = summarize_conversation_batch(conversation_text)
-        
-        # Extract labels from the entire session
-        labels = extract_labels_batch(conversation_text)
-        
-        # Store as one episode
-        episode_id = store_episode_chunk(
-            summary=summary,
-            labels=labels,
-            user_message=conversation_text[:500],
-            ai_response=""
+        # Create structured episodic memory
+        episode = create_episodic_memory(
+            conversation_text=conversation_text,
+            qdrant_client=qdrant_client,
+            collection_name=EPISODIC_COLLECTION
         )
         
-        print(f"✅ Session stored as episode: {episode_id}")
+        print(f"Session stored as episodic memory: {episode.id}")
+        
+        # Trigger semantic extraction after storing episode
+        print("Triggering semantic extraction...")
+        semantic_memories = extract_semantic_memories(
+            qdrant_client=qdrant_client,
+            episodic_collection=EPISODIC_COLLECTION,
+            semantic_collection=SEMANTIC_COLLECTION,
+            limit=20
+        )
+        
+        if semantic_memories:
+            print(f"✅ Extracted {len(semantic_memories)} semantic memories")
         
         # Clear session
         session["messages"] = []
         session["timer_task"] = None
         
     except Exception as e:
-        print(f"❌ Idle processing error: {e}")
+        print(f"Idle processing error: {e}")
         import traceback
         traceback.print_exc()
 
-def summarize_conversation_batch(conversation_text: str) -> str:
-    """Summarize an entire conversation session"""
-    
-    prompt = f"""Summarize this conversation session in 2-4 sentences. Focus on:
-- Main topics discussed
-- Key emotions or themes
-- Important details or outcomes
-
-Conversation:
-{conversation_text[:2000]}
-
-Summary:"""
-    
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"❌ Summarization error: {e}")
-        return conversation_text[:200] + "..."
-
-def extract_labels_batch(conversation_text: str) -> List[str]:
-    """Extract labels from entire conversation session"""
-    
-    prompt = f"""Extract 3-7 relevant labels/tags from this conversation session.
-Labels should be single words or short phrases that categorize the topics.
-
-Conversation:
-{conversation_text[:2000]}
-
-Return only a comma-separated list of labels. Examples: work, anxiety, achievement, relationships, tech
-
-Labels:"""
-    
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
-        )
-        labels_str = response.choices[0].message.content.strip()
-        labels = [label.strip() for label in labels_str.split(",")]
-        return labels
-    except Exception as e:
-        print(f"❌ Label extraction error: {e}")
-        return ["general"]
-
-def store_episode_chunk(summary: str, labels: List[str], user_message: str, ai_response: str) -> str:
-    """Store the conversation chunk in vector DB"""
-    
-    try:
-        # Generate UUID
-        episode_id = str(uuid.uuid4())
-        
-        # Create embedding from summary
-        vector = embedding_model.embed_query(summary)
-        
-        # Check if any existing labels match
-        existing_labels = []
-        for label in labels:
-            try:
-                # Search for similar labels
-                results = qdrant_client.query_points(
-                    collection_name=COLLECTION_NAME,
-                    query=embedding_model.embed_query(label),
-                    limit=1
-                ).points
-                
-                if results and results[0].payload.get("labels"):
-                    existing_labels.extend(results[0].payload["labels"])
-            except:
-                pass
-        
-        # Combine new and existing labels
-        all_labels = list(set(labels + existing_labels + ["episode"]))
-        
-        # Prepare payload
-        payload = {
-            "summary": summary,
-            "labels": all_labels,
-            "user_message": user_message[:500],  # Store truncated original
-            "ai_response": ai_response[:500],
-            "timestamp": datetime.now().timestamp()
-        }
-        
-        # Store in Qdrant
-        qdrant_client.upsert(
-            collection_name=COLLECTION_NAME,
-            points=[
-                PointStruct(
-                    id=episode_id,
-                    vector=vector,
-                    payload=payload
-                )
-            ]
-        )
-        
-        print(f"✅ Stored episode: {episode_id}")
-        print(f"   Summary: {summary[:80]}...")
-        print(f"   Labels: {', '.join(all_labels)}")
-        
-        return episode_id
-        
-    except Exception as e:
-        print(f"❌ Storage error: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+# Old functions removed - now using memory_functions.py
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest, background_tasks: BackgroundTasks) -> ChatResponse:
@@ -310,9 +235,21 @@ async def chat(payload: ChatRequest, background_tasks: BackgroundTasks) -> ChatR
     user_id = payload.user_id
     user_message = payload.message.strip()
     
+    # Get semantic memory context (general facts about user)
+    semantic_context = get_semantic_context(
+        qdrant_client=qdrant_client,
+        semantic_collection=SEMANTIC_COLLECTION,
+        limit=10
+    )
+    
+    # Build system prompt with semantic context
+    final_system_prompt = SYSTEM_PROMPT
+    if semantic_context:
+        final_system_prompt += f"\n\n{semantic_context}\n\nUse these facts naturally in your responses when relevant."
+    
     # Generate AI response
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": final_system_prompt},
         *[msg.model_dump() for msg in payload.history],
         {"role": "user", "content": user_message},
     ]
@@ -340,7 +277,7 @@ async def chat(payload: ChatRequest, background_tasks: BackgroundTasks) -> ChatR
     # Start new idle timer
     session["timer_task"] = asyncio.create_task(process_idle_session(user_id))
     
-    print(f"💬 Message added to session. Total messages: {len(session['messages'])}")
+    print(f"Message added to session. Total messages: {len(session['messages'])}")
     
     return ChatResponse(
         reply=reply,
@@ -351,10 +288,10 @@ async def chat(payload: ChatRequest, background_tasks: BackgroundTasks) -> ChatR
 async def search_memory(query: str, limit: int = 5):
     """Search stored episodes by semantic similarity"""
     try:
-        query_vector = embedding_model.embed_query(query)
+        query_vector = get_embedding_model().embed_query(query)
         
         results = qdrant_client.query_points(
-            collection_name=COLLECTION_NAME,
+            collection_name=EPISODIC_COLLECTION,
             query=query_vector,
             limit=limit
         ).points
@@ -363,8 +300,9 @@ async def search_memory(query: str, limit: int = 5):
         for hit in results:
             episodes.append({
                 "id": hit.id,
-                "summary": hit.payload.get("summary"),
-                "labels": hit.payload.get("labels"),
+                "story": hit.payload.get("story"),
+                "tags": hit.payload.get("tags"),
+                "importance": hit.payload.get("importance"),
                 "timestamp": hit.payload.get("timestamp")
             })
         
@@ -376,11 +314,63 @@ async def search_memory(query: str, limit: int = 5):
 async def get_stats():
     """Get memory statistics"""
     try:
-        collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+        episodic_info = qdrant_client.get_collection(EPISODIC_COLLECTION)
+        semantic_info = qdrant_client.get_collection(SEMANTIC_COLLECTION)
         return {
-            "total_episodes": collection_info.points_count,
-            "collection": COLLECTION_NAME
+            "total_episodes": episodic_info.points_count,
+            "total_semantic": semantic_info.points_count,
+            "episodic_collection": EPISODIC_COLLECTION,
+            "semantic_collection": SEMANTIC_COLLECTION
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/memory/journals")
+async def get_journals():
+    """Get all journal entries grouped by label"""
+    try:
+        # Get all episodes
+        results = qdrant_client.scroll(
+            collection_name=EPISODIC_COLLECTION,
+            limit=1000,
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        # Group by journal label
+        journals = {}
+        for point in results[0]:
+            label = point.payload.get("journal_label", "Uncategorized")
+            
+            if label not in journals:
+                journals[label] = {
+                    "label": label,
+                    "entries": [],
+                    "entry_count": 0
+                }
+            
+            journals[label]["entries"].append({
+                "id": point.id,
+                "story": point.payload.get("story"),
+                "emotion": point.payload.get("emotion"),
+                "timestamp": point.payload.get("timestamp"),
+                "importance": point.payload.get("importance")
+            })
+            journals[label]["entry_count"] += 1
+        
+        # Sort entries within each journal by timestamp (newest first)
+        for journal in journals.values():
+            journal["entries"].sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+        
+        # Convert to list and sort by entry count
+        journals_list = list(journals.values())
+        journals_list.sort(key=lambda x: x["entry_count"], reverse=True)
+        
+        return {
+            "journals": journals_list,
+            "total_journals": len(journals_list)
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -424,9 +414,9 @@ async def reflect(payload: ReflectRequest) -> ReflectResponse:
     
     try:
         # Retrieve relevant episodes from vector DB
-        query_vector = embedding_model.embed_query(query)
+        query_vector = get_embedding_model().embed_query(query)
         results = qdrant_client.query_points(
-            collection_name=COLLECTION_NAME,
+            collection_name=EPISODIC_COLLECTION,
             query=query_vector,
             limit=20  # Get more context for reflection
         ).points
@@ -434,9 +424,11 @@ async def reflect(payload: ReflectRequest) -> ReflectResponse:
         # Build context from episodes
         context = ""
         for hit in results:
-            summary = hit.payload.get("summary", "")
-            labels = hit.payload.get("labels", [])
-            context += f"- {summary} [Tags: {', '.join(labels)}]\n"
+            story = hit.payload.get("story", "")
+            tags = hit.payload.get("tags", [])
+            emotion = hit.payload.get("emotion", "")
+            emotion_str = f" [{emotion}]" if emotion else ""
+            context += f"- {story}{emotion_str} [Tags: {', '.join(tags)}]\n"
         
         if not context:
             context = "No previous conversations found. This is a fresh start!"
@@ -510,7 +502,7 @@ Format as bullet points only, ready to copy-paste."""
         )
         
     except Exception as e:
-        print(f"❌ Reflection error: {e}")
+        print(f"Reflection error: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

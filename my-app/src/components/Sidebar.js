@@ -7,8 +7,8 @@ export default function Sidebar() {
   const [hoveredItem, setHoveredItem] = useState(null);
 
   const menuItems = [
-    { icon: "🏠", label: "Dashboard", path: "/dashboard" },
-    { icon: "📖", label: "Stories", path: "/stories" },
+    { icon: "🏠", label: "Bestie", path: "/dashboard" },
+    { icon: "📖", label: "Journal", path: "/stories" },
     { icon: "🎯", label: "Goals", path: "/goals" },
     { icon: "🔍", label: "Reflect", path: "/reflect" },
   ];

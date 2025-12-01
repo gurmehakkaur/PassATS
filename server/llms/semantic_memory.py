@@ -53,7 +53,7 @@ def init_semantic_collection():
         else:
             print(f"✅ Collection exists: {SEMANTIC_COLLECTION}")
     except Exception as e:
-        print(f"❌ Error initializing semantic collection: {e}")
+        print(f" Error initializing semantic collection: {e}")
 
 
 # ========== EPISODIC RETRIEVAL FOR EXTRACTION ==========
@@ -108,7 +108,7 @@ def get_recent_episodes(lookback_days: int = 30, min_count: int = 10) -> List[Di
         return episodes[:min_count * 5]  # Return up to 5x min_count for better extraction
         
     except Exception as e:
-        print(f"❌ Error retrieving episodes: {e}")
+        print(f"Error retrieving episodes: {e}")
         return []
 
 
@@ -125,7 +125,7 @@ def extract_semantic_memories(episodes: List[Dict[str, Any]]) -> List[SemanticMe
     """
     
     if len(episodes) < 5:
-        print("⚠️ Not enough episodes for semantic extraction")
+        print("Not enough episodes for semantic extraction")
         return []
     
     # Prepare episode summaries
@@ -195,13 +195,13 @@ Return ONLY valid JSON array, no markdown.
                 )
                 semantic_memories.append(memory)
             except Exception as e:
-                print(f"⚠️ Skipping invalid semantic memory: {e}")
+                print(f"Skipping invalid semantic memory: {e}")
                 continue
         
         return semantic_memories
         
     except Exception as e:
-        print(f"❌ Error extracting semantic memories: {e}")
+        print(f"Error extracting semantic memories: {e}")
         return []
 
 
@@ -244,11 +244,11 @@ def store_semantic_memory(memory: SemanticMemory) -> bool:
             ]
         )
         
-        print(f"✅ Stored semantic memory: {memory.id} - {memory.content[:50]}...")
+        print(f"Stored semantic memory: {memory.id} - {memory.content[:50]}...")
         return True
         
     except Exception as e:
-        print(f"❌ Error storing semantic memory: {e}")
+        print(f" Error storing semantic memory: {e}")
         return False
 
 
@@ -328,7 +328,7 @@ def run_semantic_extraction(
     Returns:
         ExtractSemanticResponse with results
     """
-    print(f"🔄 Starting semantic extraction (min_episodes={min_episodes}, lookback={lookback_days} days)")
+    print(f"Starting semantic extraction (min_episodes={min_episodes}, lookback={lookback_days} days)")
     
     # 1. Get recent episodes
     episodes = get_recent_episodes(lookback_days, min_episodes)
@@ -340,7 +340,7 @@ def run_semantic_extraction(
             semantic_memories=[]
         )
     
-    print(f"📚 Retrieved {len(episodes)} episodes")
+    print(f"Retrieved {len(episodes)} episodes")
     
     # 2. Extract semantic memories
     semantic_memories = extract_semantic_memories(episodes)
@@ -352,7 +352,7 @@ def run_semantic_extraction(
             semantic_memories=[]
         )
     
-    print(f"🧠 Extracted {len(semantic_memories)} semantic memories")
+    print(f" Extracted {len(semantic_memories)} semantic memories")
     
     # 3. Store each semantic memory
     stored_count = 0
@@ -360,7 +360,7 @@ def run_semantic_extraction(
         if store_semantic_memory(memory):
             stored_count += 1
     
-    print(f"✅ Stored {stored_count}/{len(semantic_memories)} semantic memories")
+    print(f"Stored {stored_count}/{len(semantic_memories)} semantic memories")
     
     return ExtractSemanticResponse(
         status="success",
