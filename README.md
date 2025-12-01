@@ -7,6 +7,9 @@ During my co-op, I realized how much growth gets lost: achievements, lessons, de
 This is not just a “chat app.”
 It's like you telling all your achievements, goals, failures to your best friend and they maintain the journal and you can use that whenever you want bullet points for a resume or reflection for the year-end meeting.
 
+<img width="1919" height="871" alt="image" src="https://github.com/user-attachments/assets/256d7bc4-9576-4897-80c8-2e5829e9bea7" />
+
+
 ## TL;DR (What Actually Matters)
 
 - We don’t store raw chats — we summarize them.
